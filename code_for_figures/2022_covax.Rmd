@@ -1,0 +1,253 @@
+---
+title: SARS CoV-2 mRNA vaccination exposes latent HIV to Nef-specific CD8+ T-cells
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_document:
+    code_folding: hide
+    theme: space
+    toc: yes
+    toc_depth: 3
+    toc_float: no
+  BiocStyle::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+  knitrBootstrap::bootstrap_document:
+    highlight.chooser: yes
+    theme.chooser: yes
+  pdf_document:
+    toc: yes
+always_allow_html: yes
+---
+
+```{r setup, bootstrap.show.code = FALSE, results='hide', bootstrap.show.message=FALSE, warning=FALSE, cache=TRUE, echo=FALSE, comment=FALSE}
+knitr::opts_chunk$set(bootstrap.show.code = FALSE, message=FALSE, warning=FALSE)
+suppressMessages(library(data.table))
+suppressMessages(library(magrittr))
+suppressMessages(library(reshape2))
+suppressMessages(library(tidyr))
+suppressMessages(library(plyr))
+suppressMessages(library(DESeq2))
+suppressMessages(library(limma))
+suppressMessages(library(ggplot2))
+suppressMessages(library(ggsci))
+suppressMessages(library(ggthemes))
+suppressMessages(library(kableExtra))
+suppressMessages(library(pheatmap))
+suppressMessages(library(fgsea))
+set.seed(123)
+```
+
+
+```{r decoder, message=FALSE, warning=FALSE, cache=TRUE, echo=FALSE, comment=FALSE, context="data"}
+decoderFile <- "metadata.txt"
+decoder.data <- fread(decoderFile) %>% as.data.frame()
+decoder.data$group <- factor(decoder.data$condition)
+decoder.data$condition <- factor(decoder.data$condition)
+decoder.data$patient <- factor(decoder.data$patient)
+```
+
+
+```{r counts, message=FALSE, warning=FALSE, cache=TRUE, echo=FALSE, comment=FALSE, context="data"}
+counts <- read.table(file = "gene.counts.txt", header = TRUE, check.names=FALSE, row.names=1)
+decoder.data <- decoder.data[decoder.data$sample.ID %in% colnames(counts),]
+counts <- counts[,c(decoder.data$sample.ID)]
+#table(colnames(counts) == decoder.data$sample.ID )
+```
+
+# Samples
+
+The following samples were part of this analysis:
+
+```{r samples, message=FALSE, warning=FALSE, cache=TRUE, echo=FALSE, comment=FALSE, context="data"}
+kable(decoder.data[,c(-1,-5)], row.names=FALSE,  padding = 0, longtable=TRUE) %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width=F)
+```
+
+
+# Principal component plot
+
+Below is a PCA plot of all of the samples, colored by group, after adjusting for patient-specific effects with limma's removeBatchEffect function.
+
+```{r removeBatchEffect_plotPCA, message=FALSE, warning=FALSE, cache=TRUE, fig.width=5, fig.height=5, context="data", fig.align='center'}
+coldata <- data.frame(decoder.data, row.names = colnames(counts), stringsAsFactors=F)
+coldata$group <- factor(coldata$group)
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = counts,
+                                      colData = coldata,
+                                      design = ~patient+group)
+dds <- estimateSizeFactors(dds)
+vsd <- DESeq2::vst(dds, blind=TRUE)
+
+design=model.matrix(~group, data=coldata)
+assay(vsd) = limma::removeBatchEffect(assay(vsd), batch=coldata$patient, design=design)
+
+data <- plotPCA(vsd, intgroup=c("group"), returnData=TRUE, ntop=500)
+percentVar <- round(100 * attr(data, "percentVar"))
+
+ggplot(data, aes(PC1, PC2, color=group)) +
+  geom_point(size=5) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  scale_color_colorblind() + 
+  theme_bw() + theme(legend.position="bottom") +
+  ggtitle("PC1 vs PC2, top 500 most variable genes")
+```
+
+# DESeq
+
+```{r runDESeq_withPrefilter, message=FALSE, warning=FALSE, cache=TRUE, context="data"}
+coldata <- data.frame(decoder.data, row.names = colnames(counts), stringsAsFactors=F)
+coldata$group <- factor(coldata$group)
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = counts,
+                                      colData = coldata,
+                                      design = ~patient+group)
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+
+vsd <- DESeq2::vst(dds, blind=TRUE)
+design=model.matrix(~group, data=colData(dds))
+normCounts = limma::removeBatchEffect(assay(vsd), batch=dds$patient, design=design)
+
+baseMeanPerLvl <- sapply( levels(dds$group), function(lvl) rowMeans( counts(dds,normalized=TRUE)[,dds$group == lvl, drop=F] ) )
+
+alphaTR = 0.05
+
+Pfizer1Per_vs_NoTx <- results(dds, contrast=c("group","Pfizer1Per", "NoTx"), alpha=alphaTR)
+Moderna1per_vs_NoTx <- results(dds, contrast=c("group","Moderna1per", "NoTx"), alpha=alphaTR)
+Flu2per_vs_NoTx <- results(dds, contrast=c("group","Flu2per", "NoTx"), alpha=alphaTR)
+```
+
+Differential expression analysis was performed using DESeq2 with a two factor model: ~patient_groupd.
+Prior to differential expression analysis, we performed a minimal pre-filtering to keep only genes that have at least 10 reads total.  The following genes were detected as differentially expressed (adjusted p < `r alphaTR`):
+
+```{r printDEGtable, message=FALSE, warning=FALSE, cache=TRUE, echo=FALSE, eval=TRUE}
+de.all = list(Pfizer1Per_vs_NoTx=Pfizer1Per_vs_NoTx,
+              Moderna1per_vs_NoTx=Moderna1per_vs_NoTx,
+              Flu2per_vs_NoTx=Flu2per_vs_NoTx)
+
+de.all.sig <- lapply(de.all, subset, padj < alphaTR)
+
+res =  as.data.frame(sapply(de.all.sig, nrow))
+colnames(res) <- paste0("padj<",alphaTR)
+
+rel.contrs = 1:nrow(res)
+
+kable(cbind(res, contrast=rel.contrs), row.names=T)  %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width=F)
+```
+
+
+
+# Gene set enrichment with fgsea  {.tabset} 
+
+GSEA typically needs to input data sets: 1. a **sorted list of genes**; 2. a collection of gene sets, e.g. specific **pathways**. The general approach entails that the GSEA tools will look for enrichments of genes that are at the top (or the bottom) of the gene list of interest with a given pathway, i.e., if the majority of genes that are part of pathway X are found at the top of the gene list, it is assumed that there is a positive correlation of whatever measure was used to sort the gene list with pathway X. We will be testing different sets of pathways originating from different sources: MSigDB Hallmark, MSigDB KEGG. We used the fgseaMultilevel function from the fgsea package with the following parameters were used:  minGSSize = 15 ; maxGSSize  = 500. Genes were ranked based on DESeq's wald statistic (stat), which takes into account the log-fold change and its standard error (https://support.bioconductor.org/p/6124/).
+
+```{r readInGeneSets, eval=T,  warning=FALSE, cache=TRUE,comment=FALSE, echo=FALSE,  fig.width=10, fig.height=10 ,  results="asis"}
+gmt.h <- msigdbr::msigdbr(species = "Homo sapiens", category = "H") %>%  dplyr::select(gs_name, entrez_gene)  %>% split(x = .$entrez_gene, f = .$gs_name)  
+gmt.kegg <- msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG") %>% dplyr::select(gs_name, entrez_gene)  %>% split(x = .$entrez_gene, f = .$gs_name)
+```
+
+## Pfizer
+
+```{r fgsea_pfizer, eval=T,  warning=FALSE, cache=TRUE,comment=FALSE, echo=FALSE,  fig.width=10, fig.height=10 ,  results="asis"}
+x=1
+name = names(de.all)[x]
+res =  de.all[[x]] %>%  as.data.frame() %>% dplyr::filter(is.finite(stat)) %>% as.data.table(., keep.rownames=TRUE)
+setnames(res, "rn", "gene_symbol")
+setorder(res, -stat)
+
+## get entrez IDs
+eg <- clusterProfiler::bitr(res$gene_symbol, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>% as.data.table
+setnames(eg, names(eg), c("gene_symbol", "entrez"))
+
+## merge with res, create sorted list
+eg <- res[eg, on = "gene_symbol"]
+setorder(eg, -stat)
+geneList <- eg$stat
+names(geneList) <- eg$entrez
+
+# hallmark
+gmt.all <- gmt.h
+fgseaRes <- fgseaMultilevel(gmt.all, geneList, minSize=15, maxSize=500)
+topPathways <- psych::headTail(fgseaRes[padj < 0.05 ][order(NES, decreasing=T),], top=15, bottom=15, ellipsis = F)$pathway %>% unique()
+fgseaResSig <- subset(fgseaRes, padj < 0.05)
+fgseaResSig[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Hs.eg.db, keytype="ENTREZID", column="SYMBOL")] %>% suppressMessages()
+fgsea.gmt.h <- fgseaResSig
+
+# kegg
+gmt.all <- gmt.kegg
+fgseaRes <- fgseaMultilevel(gmt.all, geneList, minSize=15, maxSize=500)
+topPathways <- psych::headTail(fgseaRes[padj < 0.05 ][order(NES, decreasing=T),], top=15, bottom=15, ellipsis = F)$pathway %>% unique()
+fgseaResSig <- subset(fgseaRes, padj < 0.05)
+fgseaResSig[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Hs.eg.db, keytype="ENTREZID", column="SYMBOL")] %>% suppressMessages()
+fgsea.gmt.kegg <- fgseaResSig
+
+combined = as.data.frame(rbind(fgsea.gmt.h,fgsea.gmt.kegg))
+row.names(combined) = combined$pathway
+
+kable(combined[c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_TNFA_SIGNALING_VIA_NFKB","HALLMARK_INFLAMMATORY_RESPONSE", "KEGG_RIG_I_LIKE_RECEPTOR_SIGNALING_PATHWAY","KEGG_TOLL_LIKE_RECEPTOR_SIGNALING_PATHWAY"),], digits=15, caption=name) %>%  kable_styling("striped", full_width = F) %>%  scroll_box(width = "1000px", height = "700px")
+```
+
+
+### Heatmap of leading Edge of HALLMARK_TNFA_SIGNALING_VIA_NFKB  (pfizer)
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, cache=TRUE, echo=FALSE, comment=FALSE, context="data", fig.align='center', fig.width=6, fig.height=8}
+fgsea.gmt.h <- as.data.frame(fgsea.gmt.h)
+sig.rows = as.character(unlist(fgsea.gmt.h[fgsea.gmt.h$pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",]$leadingEdge))
+
+decod.sub= subset(decoder.data, condition != "Flu2per")
+decod.sub= subset(decod.sub, condition != "Moderna1per")
+annot_col =data.frame(Treatment = decod.sub$condition,row.names=decod.sub$sample.ID)
+samps = decod.sub$sample.ID
+log2.count.matrix = normCounts[sig.rows,samps] %>% as.matrix()
+
+pheatmap(log2.count.matrix, scale="row", show_rownames=T, cellwidth = 120/nrow(decod.sub),  annotation_col = annot_col,viridis::viridis(50), silent = F , cluster_cols = T, main = paste0("HALLMARK_TNFA_SIGNALING_VIA_NFKB leadingEdge\n", name), fontsize_row=6, fontsize=6)
+```
+
+## Moderna
+
+```{r fgsea_moderna, eval=T,  warning=FALSE, cache=TRUE,comment=FALSE, echo=FALSE,  fig.width=10, fig.height=10 ,  results="asis"}
+x=2
+name = names(de.all)[x]
+res =  de.all[[x]] %>%  as.data.frame() %>% dplyr::filter(is.finite(stat)) %>% as.data.table(., keep.rownames=TRUE)
+setnames(res, "rn", "gene_symbol")
+setorder(res, -stat)
+
+## get entrez IDs
+eg <- clusterProfiler::bitr(res$gene_symbol, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db") %>% as.data.table
+setnames(eg, names(eg), c("gene_symbol", "entrez"))
+
+## merge with res, create sorted list
+eg <- res[eg, on = "gene_symbol"]
+setorder(eg, -stat)
+geneList <- eg$stat
+names(geneList) <- eg$entrez
+
+# hallmark
+gmt.all <- gmt.h
+fgseaRes <- fgseaMultilevel(gmt.all, geneList, minSize=15, maxSize=500)
+topPathways <- psych::headTail(fgseaRes[padj < 0.05 ][order(NES, decreasing=T),], top=15, bottom=15, ellipsis = F)$pathway %>% unique()
+fgseaResSig <- subset(fgseaRes, padj < 0.05)
+fgseaResSig[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Hs.eg.db, keytype="ENTREZID", column="SYMBOL")] %>% suppressMessages()
+fgsea.gmt.h <- fgseaResSig
+
+# kegg
+gmt.all <- gmt.kegg
+fgseaRes <- fgseaMultilevel(gmt.all, geneList, minSize=15, maxSize=500)
+topPathways <- psych::headTail(fgseaRes[padj < 0.05 ][order(NES, decreasing=T),], top=15, bottom=15, ellipsis = F)$pathway %>% unique()
+fgseaResSig <- subset(fgseaRes, padj < 0.05)
+fgseaResSig[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Hs.eg.db, keytype="ENTREZID", column="SYMBOL")] %>% suppressMessages()
+fgsea.gmt.kegg <- fgseaResSig
+
+combined = as.data.frame(rbind(fgsea.gmt.h,fgsea.gmt.kegg))
+row.names(combined) = combined$pathway
+
+kable(combined[c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "KEGG_OTHER_GLYCAN_DEGRADATION", "KEGG_RIG_I_LIKE_RECEPTOR_SIGNALING_PATHWAY"),], digits=15,caption=name) %>%  kable_styling("striped", full_width = F) %>%  scroll_box(width = "1000px", height = "700px")
+```
+
+
+
+***
+# Session Info
+```{r session, message=FALSE, warning=FALSE, cache=TRUE,comment="",echo=FALSE, fig.width=10, fig.height=5.5, context="data"}
+sessionInfo()
+```
