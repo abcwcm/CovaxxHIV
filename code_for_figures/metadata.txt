@@ -1,0 +1,13 @@
+qc.data.dir	sample.ID	patient	condition	labels
+B032-1	B032-1	B032	NoTx	No tx
+B032-2	B032-2	B032	Pfizer1Per	1% Pfizer
+B032-4	B032-4	B032	Moderna1per	1% Moderna
+B032-6	B032-6	B032	Flu2per	2% Flu
+OM5011-1	OM5011-1	OM5011	NoTx	No tx
+OM5011-2	OM5011-2	OM5011	Pfizer1Per	1% Pfizer
+OM5011-4	OM5011-4	OM5011	Moderna1per	1% Moderna
+OM5011-6	OM5011-6	OM5011	Flu2per	2% Flu
+OM5334-1	OM5334-1	OM5334	NoTx	No tx
+OM5334-2	OM5334-2	OM5334	Pfizer1Per	1% Pfizer
+OM5334-4	OM5334-4	OM5334	Moderna1per	1% Moderna
+OM5334-6	OM5334-6	OM5334	Flu2per	2% Flu
