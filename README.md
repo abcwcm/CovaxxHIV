@@ -15,7 +15,7 @@ The [`makefile`](https://github.com/abcwcm/CovaxxHIV/blob/main/preprocessing/mak
 
 The [`code_for_figure` directory](https://github.com/abcwcm/CovaxxHIV/tree/main/code_for_figures) **contains the read counts and metadata** that are needed to run the code in the `.Rmd` document to generate the figures of the publication that were based on the bulk RNA-seq data set. The HTML file is the fully compiled result of the Rmd file.
 
-*The raw reads have not been submitted to a repository due to this being patient data.* If needed, we may be able to provide [privay-protecting pBAM files](https://www.sciencedirect.com/science/article/pii/S0092867420312332) via [ptools](https://github.com/ENCODE-DCC/ptools).
+*The raw reads have not been submitted to a repository due to this being patient data.* If needed, we may be able to provide [privay-protecting pBAM files](https://www.sciencedirect.com/science/article/pii/S0092867420312332) via [ptools](https://github.com/ENCODE-DCC/ptools). That being said, the read count table can be found here.
 
 Don't hesitate to get in touch with abc(at)med.cornell.edu.
 
